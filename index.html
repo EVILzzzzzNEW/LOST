@@ -7450,7 +7450,6 @@ function joinOnline(){
 
   const c = new LB.LoadBalancingClient(Photon.ConnectionProtocol.Wss, CFG.appId, CFG.appVersion);
   MP.client = c;
-  c.setUserNickname(MP.name);
   const S = (LB.LoadBalancingClient && LB.LoadBalancingClient.State) || {};
   c.onStateChange = function(state){
     if (!MP.joinSent && (state === S.ConnectedToMaster || state === S.JoinedLobby)){
@@ -7463,6 +7462,7 @@ function joinOnline(){
   c.onJoinRoom = function(){
     MP.inRoom = true;
     MP.myNr = c.myActor().actorNr;
+    try { c.myActor().setName(MP.name); } catch(e){}   // the SDK names the player here, not in the constructor
     const RG = LB.Constants && LB.Constants.ReceiverGroup;
     if (RG) MP_RECV = RG.Others;
     setStatus('');
