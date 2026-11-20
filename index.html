@@ -7170,7 +7170,7 @@ requestAnimationFrame(frame);
   aimBtn.addEventListener('pointerup',function(e){ if(aimMode==='tap' && !editing) e.stopImmediatePropagation(); },true);
 
   /* ---------- iPad: no selection, callouts, pinch, page scroll ---------- */
-  function inUI(t){ return !!(t && t.closest && t.closest('#ik-settings,#ik-bar')); }
+  function inUI(t){ return !!(t && t.closest && t.closest('#ik-settings,#ik-bar,#gate,#lobby')); }
   ['selectstart','dragstart','contextmenu'].forEach(function(type){
     document.addEventListener(type,function(e){ if(!inUI(e.target)) e.preventDefault(); });
   });
@@ -7195,6 +7195,15 @@ requestAnimationFrame(frame);
    ========================================================================= */
 (function(){
 "use strict";
+
+/* The game reads letters and digits at window level (WASD, R, 1-4, V...) and
+   cancels them, so text boxes in the sign-in and lobby panels never got them.
+   Stop those handlers for typing inside our panels; the box still gets the key. */
+['keydown','keyup','keypress'].forEach(type => {
+  window.addEventListener(type, e => {
+    if (e.target && e.target.closest && e.target.closest('#gate,#lobby,#ik-settings')) e.stopImmediatePropagation();
+  }, true);
+});
 
 /* ---- settings you may change ---------------------------------------- */
 const CFG = {
@@ -7472,7 +7481,11 @@ function joinOnline(){
   c.onActorJoin = function(){ sendHello(); refreshLobby(); };
   c.onActorLeave = function(a){ removePeer(a.actorNr); refreshLobby(); };
   c.onEvent = function(code, content, actorNr){ onNet(code, content, actorNr); };
-  c.onError = function(errCode, msg){ setStatus('ERROR ' + errCode + ': ' + msg); };
+  c.onError = function(errCode, msg){
+    setStatus('ERROR ' + errCode + ': ' + msg + ' — PRESS JOIN TO TRY AGAIN');
+    disconnect();              // so JOIN can connect again
+    refreshLobby();
+  };
   c.connectToRegionMaster(CFG.region);
 }
 let MP_RECV = 0;
