@@ -488,6 +488,18 @@
   #mpBanner{position:fixed;left:0;right:0;top:36%;text-align:center;font-weight:800;letter-spacing:.3em;font-size:14px;
     color:#ffb340;z-index:14;pointer-events:none;display:none;text-shadow:0 2px 8px #000;}
   #mpBanner.on{display:block;}
+  #gate{z-index:60 !important;}
+  #nameIn,#acctName{font:inherit;font-size:14px;letter-spacing:.2em;text-align:center;padding:12px;width:100%;box-sizing:border-box;
+    background:rgba(0,0,0,.4);color:#e9eef3;border:1px solid rgba(255,255,255,.22);margin-top:8px;}
+  #acctBox{margin-top:16px;padding-top:12px;border-top:1px solid rgba(255,255,255,.14);text-align:left;}
+  #acctBox .acctH{font-size:11px;letter-spacing:.3em;color:#ffb340;margin-bottom:8px;}
+  #acctWho{font-size:11px;letter-spacing:.08em;line-height:1.5;color:rgba(223,230,236,.7);margin-bottom:8px;}
+  #acctBox .acctRow{display:flex;gap:8px;margin-top:8px;}
+  #acctBox .acctRow input{flex:1;min-width:0;}
+  #acctBox button{font:inherit;font-size:11px;letter-spacing:.2em;padding:10px 12px;color:#ffb340;background:rgba(255,179,64,.12);
+    border:1px solid rgba(255,179,64,.6);cursor:pointer;pointer-events:auto;}
+  #acctBox #acctOut{color:#e9eef3;border-color:rgba(255,255,255,.32);background:transparent;}
+  #acctNote{font-size:11px;color:#ffb340;min-height:1.2em;margin-top:6px;}
 </style>
 </head>
 <body>
@@ -614,11 +626,19 @@
 </div>
 
 <div id="gate"><div class="mbox">
-  <h2>SIGN IN</h2>
-  <p>Sign in with Google once to join online matches. Your Google first name is used as your callsign.</p>
-  <div id="gateBtn"></div>
-  <p id="gateNote"></p>
-  <button class="mbtn dim" id="gateBack" type="button">BACK</button>
+  <div id="gateSignin">
+    <h2>SIGN IN</h2>
+    <p>Sign in with Google to play. Your account keeps your callsign.</p>
+    <div id="gateBtn"></div>
+    <p id="gateNote"></p>
+  </div>
+  <div id="gateName" style="display:none">
+    <h2>CALLSIGN</h2>
+    <p>This is the name other players see. You can change it later in Settings.</p>
+    <input id="nameIn" maxlength="14" placeholder="CALLSIGN" autocomplete="off" spellcheck="false">
+    <button class="mbtn" id="nameSave" type="button">SAVE</button>
+    <p id="nameNote"></p>
+  </div>
 </div></div>
 
 <div id="lobby"><div class="mbox">
@@ -7185,7 +7205,7 @@ const CFG = {
   killsToWin:  10,
   // Google OAuth "Web application" client ID (see the setup steps). Until it is
   // pasted here, the sign-in screen tells you it is not configured yet.
-  googleClientId: 'PASTE-YOUR-CLIENT-ID.apps.googleusercontent.com'
+  googleClientId: '331959028342-hghsistb78moctilup6l268kbkp8a4qv.apps.googleusercontent.com'
 };
 const ACC_KEY    = 'ironhold.account';
 const RESPAWN_T  = 3;
@@ -7203,12 +7223,16 @@ const MP = window.MP = {
 const $q = id => document.getElementById(id);
 const RECV_OTHERS = 0;      // replaced with the SDK constant once it loads
 
-/* ---- account (Google) ------------------------------------------------ */
+/* ---- account (Google) -------------------------------------------------- */
+const SIGNIN_READY = CFG.googleClientId.indexOf('PASTE-') !== 0 && CFG.googleClientId.indexOf('.apps.googleusercontent.com') > 0;
 function loadAccount(){
   try { return JSON.parse(localStorage.getItem(ACC_KEY) || 'null'); } catch(e){ return null; }
 }
 function saveAccount(a){
   try { localStorage.setItem(ACC_KEY, JSON.stringify(a)); } catch(e){}
+}
+function clearAccount(){
+  try { localStorage.removeItem(ACC_KEY); } catch(e){}
 }
 function decodeJwt(t){
   const b = t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/');
@@ -7216,21 +7240,34 @@ function decodeJwt(t){
     '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
   return JSON.parse(json);
 }
-let gateCb = null, gateTries = 0;
-function showGate(cb){
-  gateCb = cb;
+function cleanName(s){
+  return String(s || '').replace(/[^\p{L}\p{N} _\-]/gu, '').trim().slice(0, 14);
+}
+let gateTries = 0;
+function showGate(step){
   $q('gate').classList.add('on');
-  if (CFG.googleClientId.indexOf('PASTE-') === 0){
-    $q('gateNote').textContent = 'GOOGLE SIGN-IN IS NOT SET UP YET. PUT YOUR CLIENT ID IN googleClientId (SEE SETUP STEPS).';
+  $q('gateSignin').style.display = step === 'signin' ? '' : 'none';
+  $q('gateName').style.display   = step === 'name'   ? '' : 'none';
+}
+function showSignIn(){
+  showGate('signin');
+  $q('gateNote').textContent = '';
+  if (!SIGNIN_READY){
+    $q('gateNote').textContent = 'GOOGLE SIGN-IN IS NOT CONFIGURED.';
     return;
   }
-  $q('gateNote').textContent = '';
   renderGoogleButton();
+}
+function showNameStep(){
+  showGate('name');
+  $q('nameIn').value = (MP.account && MP.account.name) || (MP.account && MP.account.googleName) || '';
+  $q('nameNote').textContent = '';
+  setTimeout(() => $q('nameIn').focus(), 50);
 }
 function renderGoogleButton(){
   if (!window.google || !google.accounts || !google.accounts.id){
     if (++gateTries < 40) setTimeout(renderGoogleButton, 250);
-    else $q('gateNote').textContent = 'COULD NOT LOAD GOOGLE SIGN-IN. CHECK YOUR INTERNET CONNECTION OR OPEN THE GAME FROM A WEB ADDRESS.';
+    else $q('gateNote').textContent = 'COULD NOT LOAD GOOGLE SIGN-IN. CHECK YOUR CONNECTION AND THAT THE GAME IS OPENED FROM A WEB ADDRESS.';
     return;
   }
   google.accounts.id.initialize({
@@ -7247,18 +7284,91 @@ function onCredential(resp){
   let p;
   try { p = decodeJwt(resp.credential); }
   catch(e){ $q('gateNote').textContent = 'SIGN-IN FAILED. TRY AGAIN.'; return; }
-  const acc = { sub:p.sub, name:String(p.given_name || p.name || 'OPERATIVE').slice(0,16), email:p.email || '' };
-  saveAccount(acc);
-  MP.account = acc;
-  $q('gate').classList.remove('on');
-  const cb = gateCb; gateCb = null;
-  if (cb) cb(acc);
+  const old = loadAccount();
+  const sameUser = !!(old && old.sub === p.sub);
+  MP.account = {
+    sub: p.sub,
+    email: p.email || '',
+    googleName: String(p.given_name || p.name || 'OPERATIVE').slice(0, 16),
+    name: sameUser ? old.name : ''
+  };
+  saveAccount(MP.account);
+  refreshAccountBox();
+  if (MP.account.name) finishGate();
+  else showNameStep();
 }
-$q('gateBack').addEventListener('click', e => {
-  e.stopPropagation();
+function finishGate(){
   $q('gate').classList.remove('on');
-  gateCb = null;
+  MP.name = MP.account.name;
+  refreshAccountBox();
+}
+function setName(n){
+  MP.account.name = n;
+  MP.name = n;
+  saveAccount(MP.account);
+  if (MP.inRoom) sendHello();
+  refreshAccountBox();
+}
+$q('nameSave').addEventListener('click', e => {
+  e.stopPropagation();
+  const n = cleanName($q('nameIn').value);
+  if (!n){ $q('nameNote').textContent = 'USE 1 TO 14 LETTERS OR NUMBERS.'; return; }
+  setName(n);
+  finishGate();
 });
+$q('nameIn').addEventListener('keydown', e => { if (e.key === 'Enter') $q('nameSave').click(); });
+
+function signOut(){
+  if (MP.inMatch || MP.client) exitToMenu();
+  try { google.accounts.id.disableAutoSelect(); } catch(e){}
+  saveAccount(Object.assign({}, MP.account, { signedOut:true }));   // keeps the callsign for next sign-in
+  MP.account = null;
+  MP.name = '';
+  refreshAccountBox();
+  showSignIn();
+}
+
+/* account section inside the Settings panel */
+function buildAccountBox(){
+  const box = document.querySelector('#ik-settings .ik-box');
+  const btns = box && box.querySelector('.ik-btns');
+  if (!box || !btns) return;
+  const d = document.createElement('div');
+  d.id = 'acctBox';
+  d.innerHTML =
+    '<div class="acctH">ACCOUNT</div>' +
+    '<div id="acctWho"></div>' +
+    '<div class="acctRow"><input id="acctName" maxlength="14" placeholder="CALLSIGN" autocomplete="off">' +
+    '<button type="button" id="acctSave">SAVE NAME</button></div>' +
+    '<div class="acctRow"><button type="button" id="acctOut">SIGN OUT</button></div>' +
+    '<div id="acctNote"></div>';
+  box.insertBefore(d, btns);
+  $q('acctSave').addEventListener('click', e => {
+    e.stopPropagation();
+    const n = cleanName($q('acctName').value);
+    if (!n){ $q('acctNote').textContent = 'USE 1 TO 14 LETTERS OR NUMBERS.'; return; }
+    setName(n);
+    $q('acctNote').textContent = 'CALLSIGN SAVED.';
+  });
+  $q('acctOut').addEventListener('click', e => { e.stopPropagation(); signOut(); });
+  $q('ik-open') && $q('ik-open').addEventListener('click', refreshAccountBox);
+  refreshAccountBox();
+}
+function refreshAccountBox(){
+  const who = $q('acctWho');
+  if (!who) return;
+  if (MP.account){
+    who.textContent = 'SIGNED IN AS ' + (MP.account.email || MP.account.googleName) + ' · CALLSIGN ' + (MP.account.name || '—');
+    $q('acctName').value = MP.account.name || '';
+  } else {
+    who.textContent = 'NOT SIGNED IN';
+    $q('acctName').value = '';
+  }
+  $q('acctOut').style.display = MP.account ? '' : 'none';
+  $q('acctNote').textContent = '';
+  const lw = $q('lobbyWho');
+  if (lw) lw.textContent = 'SIGNED IN AS ' + (MP.account ? MP.account.name.toUpperCase() : '—');
+}
 
 /* ---- lobby ------------------------------------------------------------ */
 function setStatus(t){ $q('lobbyStatus').textContent = t || ''; }
@@ -7303,9 +7413,8 @@ function nameOf(nr){
 $q('onlineBtn').addEventListener('click', e => {
   e.stopPropagation();
   SFX.init();
-  MP.account = loadAccount();
-  if (MP.account) { MP.name = MP.account.name; showLobby(); }
-  else showGate(acc => { MP.name = acc.name; showLobby(); });
+  if (!MP.account){ showSignIn(); return; }
+  showLobby();
 });
 $q('lobbyBack').addEventListener('click', e => {
   e.stopPropagation();
@@ -7627,6 +7736,15 @@ function exitToMenu(){
 /* the game-over button returns to the menu after an online match */
 MP.exitToMenu = exitToMenu;
 
+
+/* ---- startup ----------------------------------------------------------- */
+buildAccountBox();
+const savedAcc = loadAccount();
+MP.account = (savedAcc && !savedAcc.signedOut) ? savedAcc : null;
+if (!MP.account) showSignIn();
+else if (!MP.account.name) showNameStep();
+else { MP.name = MP.account.name; }
+refreshAccountBox();
 })();
 
 </script>
