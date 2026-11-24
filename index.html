@@ -7182,11 +7182,10 @@ requestAnimationFrame(frame);
   applyLayout();
 })();
 </script>
-<script src="Photon-Javascript_SDK.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script>
 /* =========================================================================
-   ONLINE MODE — Photon Realtime room, Google sign-in gate (first join only),
+   ONLINE MODE — shared server room through the IRONHOLD relay, Google sign-in,
    pause menu actions. Runs after the main game script and talks to it through
    its top-level state (scene, player, G, UI, enemies) and the MP hooks in the
    game code (MP_ON, MP.hitMeshes, MP.update, MP.onShotHit, MP.onLocalDeath,
@@ -7206,16 +7205,14 @@ requestAnimationFrame(frame);
 
 /* ---- settings you may change ---------------------------------------- */
 const CFG = {
-  appId:       '54b6eb9c-1c61-43c9-8b96-1df2a29169c7',   // Photon App ID
-  appVersion:  '1.0',              // every player must use the same string
-  region:      'jp',               // Photon region master
-  maxPlayers:  10,             // one shared room; a full room refuses new players
-  globalRoom:  'IRONHOLD-GLOBAL',   // everyone joins this room, no codes
+  // Your relay's address after deploying (see the setup steps). Until you replace
+  // YOUR-SUBDOMAIN, online play shows "server not set up".
+  serverUrl:   'wss://winter-bar-9b2e.markusik992.workers.dev/ws',
+  maxPlayers:  10,           // the relay refuses an 11th player
   killsToWin:  10,
-  // Google OAuth "Web application" client ID (see the setup steps). Until it is
-  // pasted here, the sign-in screen tells you it is not configured yet.
   googleClientId: '331959028342-hghsistb78moctilup6l268kbkp8a4qv.apps.googleusercontent.com'
 };
+const RELAY_READY = CFG.serverUrl.indexOf('YOUR-SUBDOMAIN') < 0;
 const ACC_KEY    = 'ironhold.account';
 const RESPAWN_T  = 3;
 const EV = { POS:1, HIT:2, DIED:3, START:4, HELLO:5 };
@@ -7226,11 +7223,10 @@ const MP = window.MP = {
   myNr:-1, name:'', account:null,
   inMatch:false,            // this device is in a live online match
   peers:{}, scores:{},      // remote players by actor number; kills/deaths
-  respawnT:0, sendT:0
+  respawnT:0, sendT:0, roster:{}
 };
 
 const $q = id => document.getElementById(id);
-const RECV_OTHERS = 0;      // replaced with the SDK constant once it loads
 
 /* ---- account (Google) -------------------------------------------------- */
 const SIGNIN_READY = CFG.googleClientId.indexOf('PASTE-') !== 0 && CFG.googleClientId.indexOf('.apps.googleusercontent.com') > 0;
@@ -7401,18 +7397,16 @@ function refreshLobby(){
 }
 function escapeHtml(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function actorList(){
-  const out = [];
-  const acts = MP.client && MP.client.myRoomActors ? MP.client.myRoomActors() : {};
-  for (const k in acts){
-    const a = acts[k];
-    out.push({ nr:a.actorNr, name: a.actorNr === MP.myNr ? MP.name : (a.name || ('OPERATIVE ' + a.actorNr)) });
+  const out = [{ nr: MP.myNr, name: MP.name }];
+  for (const id in MP.roster){
+    const p = MP.roster[id];
+    if (p.id !== MP.myNr) out.push({ nr: p.id, name: p.name });
   }
   return out;
 }
 function actorName(nr){
   if (nr === MP.myNr) return MP.name;
-  const acts = MP.client && MP.client.myRoomActors ? MP.client.myRoomActors() : {};
-  return acts[nr] && acts[nr].name ? acts[nr].name : '';
+  return MP.roster[nr] ? MP.roster[nr].name : '';
 }
 function nameOf(nr){
   if (nr === MP.myNr) return MP.name;
@@ -7446,71 +7440,69 @@ $q('lobbyDeploy').addEventListener('click', e => {
   deploy();
 });
 
-/* ---- Photon ----------------------------------------------------------- */
+/* ---- server connection (own relay on Cloudflare; see the setup steps) --- */
 function joinOnline(){
-  if (MP.client){ return; }
-  if (typeof Photon === 'undefined' || !Photon.LoadBalancing){
-    setStatus('PHOTON SDK NOT FOUND. PUT Photon-Javascript_SDK.js NEXT TO THIS FILE AND RELOAD.');
-    return;
-  }
-  const LB = Photon.LoadBalancing;
-  const code = CFG.globalRoom;
-  MP.roomCode = code;
+  if (MP.client) return;
+  if (!RELAY_READY){ setStatus('SERVER NOT SET UP YET. SEE SETUP STEPS.'); return; }
   setStatus('CONNECTING…');
-
-  const c = new LB.LoadBalancingClient(Photon.ConnectionProtocol.Wss, CFG.appId, CFG.appVersion);
-  MP.client = c;
-  const S = (LB.LoadBalancingClient && LB.LoadBalancingClient.State) || {};
-  c.onStateChange = function(state){
-    if (!MP.joinSent && (state === S.ConnectedToMaster || state === S.JoinedLobby)){
-      MP.joinSent = true;
-      setStatus('JOINING ROOM ' + code + '…');
-      c.joinRoom(code, { createIfNotExists:true }, { maxPlayers:CFG.maxPlayers });   // SDK reads maxPlayers from createOptions
-    }
-    if (state === S.Disconnected){ onDisconnected(); }
-  };
-  c.onJoinRoom = function(){
+  let ws;
+  try { ws = new WebSocket(CFG.serverUrl); }
+  catch(e){ setStatus('CONNECTION FAILED. PRESS RETRY.'); return; }
+  MP.client = ws;
+  ws.onmessage = ev => onServerMsg(ev.data);
+  ws.onerror   = () => setStatus('CONNECTION FAILED. PRESS RETRY.');
+  ws.onclose   = () => { if (MP.client === ws) onDisconnected(); };
+}
+function onServerMsg(raw){
+  let m;
+  try { m = JSON.parse(raw); } catch(e){ return; }
+  if (m.type === 'welcome'){
+    MP.myNr = m.id;
     MP.inRoom = true;
-    MP.myNr = c.myActor().actorNr;
-    try { c.myActor().setName(MP.name); } catch(e){}   // the SDK names the player here, not in the constructor
-    const RG = LB.Constants && LB.Constants.ReceiverGroup;
-    if (RG) MP_RECV = RG.Others;
-    setStatus('');
     sendHello();
+    setStatus('');
     refreshLobby();
-  };
-  c.onActorJoin = function(){ sendHello(); refreshLobby(); };
-  c.onActorLeave = function(a){ removePeer(a.actorNr); refreshLobby(); };
-  c.onEvent = function(code, content, actorNr){ onNet(code, content, actorNr); };
-  c.onError = function(errCode, msg){
-    setStatus('ERROR ' + errCode + ': ' + msg + ' — PRESS JOIN TO TRY AGAIN');
-    disconnect();              // so JOIN can connect again
+  } else if (m.type === 'roster'){
+    const now = {};
+    m.players.forEach(p => { now[p.id] = p; });
+    for (const id in MP.roster){ if (!now[id]) removePeer(+id); }
+    MP.roster = now;
+    m.players.forEach(p => { if (p.id !== MP.myNr) ensurePeer(p.id, p.name); });
     refreshLobby();
-  };
-  c.connectToRegionMaster(CFG.region);
+  } else if (m.type === 'evt'){
+    onNet(m.code, m.data, m.from);
+  } else if (m.type === 'full'){
+    setStatus('THE SERVER IS FULL (10 OPERATIVES). TRY AGAIN IN A MOMENT.');
+    disconnect();
+    refreshLobby();
+  }
 }
-let MP_RECV = 0;
 function send(code, data){
-  if (!MP.client || !MP.inRoom) return;
-  try { MP.client.raiseEvent(code, data, { receivers: MP_RECV }); } catch(e){}
+  const ws = MP.client;
+  if (!ws || ws.readyState !== 1 || !MP.inRoom) return;
+  try { ws.send(JSON.stringify({ type:'evt', code:code, data:data })); } catch(e){}
 }
-function sendHello(){ send(EV.HELLO, { n: MP.name }); }
-
-function leaveRoom(){
-  if (MP.client && MP.inRoom){ try { MP.client.leaveRoom(); } catch(e){} }
-  MP.inRoom = false; MP.joinSent = false;
+function sendHello(){
+  const ws = MP.client;
+  if (!ws || ws.readyState !== 1) return;
+  try { ws.send(JSON.stringify({ type:'hello', name: MP.name })); } catch(e){}
+}
+function leaveRoom(){ disconnect(); }
+function disconnect(){
+  const ws = MP.client;
+  MP.client = null;
+  MP.inRoom = false;
+  MP.roster = {};
   clearPeers();
+  if (ws){ try { ws.close(1000, 'bye'); } catch(e){} }
   setStatus('');
 }
-function disconnect(){
-  leaveRoom();
-  if (MP.client){ try { MP.client.disconnect(); } catch(e){} }
-  MP.client = null;
-}
 function onDisconnected(){
-  MP.inRoom = false; MP.joinSent = false; MP.client = null;
+  MP.client = null;
+  MP.inRoom = false;
+  MP.roster = {};
   clearPeers();
-  if (!MP.inMatch) setStatus('DISCONNECTED FROM THE SERVER.');
+  if (!MP.inMatch) setStatus('DISCONNECTED FROM THE SERVER. PRESS RETRY.');
   refreshLobby();
 }
 
@@ -7714,7 +7706,7 @@ MP.update = function(dt){
   if (G.running && !player.dead && MP.inRoom){
     MP.sendT -= dt;
     if (MP.sendT <= 0){
-      MP.sendT = 0.08;
+      MP.sendT = 0.125;   // 8 updates a second keeps relay traffic low
       send(EV.POS, { x:player.pos.x, y:player.pos.y, z:player.pos.z, yaw:player.yaw, c:player.crouch?1:0, d:0 });
     }
   }
