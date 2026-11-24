@@ -645,8 +645,7 @@
   <h2>ONLINE MATCH</h2>
   <p id="lobbyWho"></p>
   <div id="lobbyJoinRow">
-    <input id="roomIn" maxlength="12" placeholder="ROOM CODE (OPTIONAL)" autocomplete="off" spellcheck="false">
-    <button class="mbtn" id="lobbyJoin" type="button">JOIN</button>
+    <button class="mbtn" id="lobbyJoin" type="button">RETRY</button>
   </div>
   <div id="lobbyRoom">
     <p id="lobbyRoomName"></p>
@@ -7210,7 +7209,8 @@ const CFG = {
   appId:       '54b6eb9c-1c61-43c9-8b96-1df2a29169c7',   // Photon App ID
   appVersion:  '1.0',              // every player must use the same string
   region:      'jp',               // Photon region master
-  maxPlayers:  8,
+  maxPlayers:  10,             // one shared room; a full room refuses new players
+  globalRoom:  'IRONHOLD-GLOBAL',   // everyone joins this room, no codes
   killsToWin:  10,
   // Google OAuth "Web application" client ID (see the setup steps). Until it is
   // pasted here, the sign-in screen tells you it is not configured yet.
@@ -7383,19 +7383,20 @@ function refreshAccountBox(){
 function setStatus(t){ $q('lobbyStatus').textContent = t || ''; }
 function showLobby(){
   $q('lobby').classList.add('on');
+  if (!MP.client && !MP.inRoom) joinOnline();   // go straight to the global server
   $q('lobbyWho').textContent = 'SIGNED IN AS ' + (MP.account ? MP.account.name.toUpperCase() : '—');
   refreshLobby();
 }
 function hideLobby(){ $q('lobby').classList.remove('on'); }
 function refreshLobby(){
   const inRoom = MP.inRoom;
-  $q('lobbyJoinRow').style.display = inRoom ? 'none' : '';
+  $q('lobbyJoinRow').style.display = (!inRoom && !MP.client) ? '' : 'none';   // RETRY when not connected
   $q('lobbyRoom').style.display    = inRoom ? '' : 'none';
   if (inRoom){
     const list = $q('lobbyList');
     const names = actorList().map(a => (a.nr === MP.myNr ? '▸ ' : '') + a.name);
     list.innerHTML = names.map(n => '<div>' + escapeHtml(n) + '</div>').join('');
-    $q('lobbyRoomName').textContent = 'ROOM ' + MP.roomCode + ' · ' + names.length + '/' + CFG.maxPlayers + ' OPERATIVES';
+    $q('lobbyRoomName').textContent = 'GLOBAL SERVER · ' + names.length + '/' + CFG.maxPlayers + ' OPERATIVES';
   }
 }
 function escapeHtml(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
@@ -7436,7 +7437,7 @@ $q('lobbyLeave').addEventListener('click', e => {
   disconnect();                // a new client is made on the next JOIN
   refreshLobby();
 });
-$q('lobbyJoin').addEventListener('click', e => {
+$q('lobbyJoin').addEventListener('click', e => {   // RETRY
   e.stopPropagation();
   joinOnline();
 });
@@ -7453,7 +7454,7 @@ function joinOnline(){
     return;
   }
   const LB = Photon.LoadBalancing;
-  const code = ($q('roomIn').value || '').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,12) || 'OPEN';
+  const code = CFG.globalRoom;
   MP.roomCode = code;
   setStatus('CONNECTING…');
 
